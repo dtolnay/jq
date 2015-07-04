@@ -39,6 +39,7 @@ block gen_param_regular(const char* name);
 block gen_param(const char* name);
 block gen_lambda(block body);
 block gen_call(const char* name, block body);
+block gen_call_native(const char *name);
 block gen_subexp(block a);
 block gen_both(block a, block b);
 block gen_const_object(block expr);

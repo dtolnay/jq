@@ -3,16 +3,21 @@
 
 LIBJQ_INCS = jq_parser.h builtin.h bytecode.h compile.h exec_stack.h	\
    libm.h jv_alloc.h jv_dtoa.h jv_unicode.h locfile.h		 	\
-   opcode_list.h parser.y jv_utf8_tables.h lexer.l util.h linker.h
+   opcode_list.h parser.y jv_utf8_tables.h lexer.l util.h linker.h \
+   runtime.h ast.h ast.hpp codegen.h jv_new.hpp
 
 LIBJQ_SRC = locfile.c bytecode.c compile.c execute.c builtin.c jv.c	\
   jv_parse.c jv_print.c jv_dtoa.c jv_unicode.c jv_aux.c jv_file.c	\
-  jv_alloc.c jq_test.c util.c linker.c ${LIBJQ_INCS}
+  jv_alloc.c jq_test.c util.c linker.c runtime.c ast.cpp codegen.cpp \
+  ${LIBJQ_INCS}
 
 ### C build options
 
-AM_CFLAGS = -Wextra -Wall -Wno-missing-field-initializers	\
+WARNINGS = -Wextra -Wall -Wno-missing-field-initializers	\
   -Wno-unused-parameter -Wno-unused-function
+
+AM_CFLAGS = $(WARNINGS) $(LLVM_CFLAGS)
+AM_CXXFLAGS = $(WARNINGS) $(LLVM_CXXFLAGS)
 
 ACLOCAL_AMFLAGS = -I config/m4
 
@@ -84,12 +89,15 @@ main.c: version.h
 
 bin_PROGRAMS = jq
 jq_SOURCES = main.c version.h
-jq_LDFLAGS = -static-libtool-libs
-jq_LDADD = libjq.la -lm
+jq_LDFLAGS = -static-libtool-libs -rdynamic
+jq_LDADD = libjq.la -lm -lstdc++
 
 if ENABLE_ALL_STATIC
 jq_LDFLAGS += -all-static
 endif
+
+jq_LDFLAGS += $(LLVM_LDFLAGS)
+libjq_la_LDFLAGS += $(LLVM_LDFLAGS)
 
 ### Tests (make check)
 

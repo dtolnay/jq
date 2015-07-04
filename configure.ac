@@ -16,6 +16,7 @@ AM_MAINTAINER_MODE([enable])
 AC_PROG_CC
 AC_PROG_CC_STDC
 AC_PROG_CPP_WERROR
+AC_PROG_CXX
 AC_PROG_YACC
 AC_OBJEXT
 AC_EXEEXT
@@ -42,6 +43,22 @@ if test "$USE_MAINTAINER_MODE" = yes; then
   if test "x$LEX" != xflex; then
     LEX="$SHELL $missing_dir/missing flex"
   fi
+fi
+
+
+AC_PATH_PROG([LLVM_CONFIG], [llvm-config-3.6], [no])
+if test "x$LLVM_CONFIG" != xno; then
+  AC_SUBST([LLVM_CFLAGS],
+    [`$LLVM_CONFIG --cflags \
+      | sed 's/-DNDEBUG\>//' \
+      | sed 's/-D_GNU_SOURCE\>//'`])
+  AC_SUBST([LLVM_CXXFLAGS],
+    [`$LLVM_CONFIG --cxxflags \
+      | sed 's/-DNDEBUG\>//' \
+      | sed 's/-D_GNU_SOURCE\>//'`])
+  AC_SUBST([LLVM_LDFLAGS],
+    [`$LLVM_CONFIG --ldflags --libs core mcjit native --system-libs \
+      | tr '\n' ' '`])
 fi
 
 

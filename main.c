@@ -17,6 +17,7 @@
 #include <wtypes.h>
 #endif
 
+#include "codegen.h"
 #include "compile.h"
 #include "jv.h"
 #include "jq.h"
@@ -120,27 +121,37 @@ static int options = 0;
 
 static int process(jq_state *jq, jv value, int flags, int dumpopts) {
   int ret = 14; // No valid results && -e -> exit(4)
-  jq_start(jq, value, flags);
   jv result;
-  while (jv_is_valid(result = jq_next(jq))) {
-    if ((options & RAW_OUTPUT) && jv_get_kind(result) == JV_KIND_STRING) {
-      fwrite(jv_string_value(result), 1, jv_string_length_bytes(jv_copy(result)), stdout);
-      ret = 0;
-      jv_free(result);
-    } else {
-      if (jv_get_kind(result) == JV_KIND_FALSE || jv_get_kind(result) == JV_KIND_NULL)
-        ret = 11;
-      else
+  for (int i = 0; i < 1000; ++i) { // benchmark
+    jq_start(jq, jv_copy(value), flags);
+    while (jv_is_valid(result = jq_next(jq))) {
+      if (i < 999) {
+        jv_free(result);
+        continue;
+      }
+      if ((options & RAW_OUTPUT) && jv_get_kind(result) == JV_KIND_STRING) {
+        fwrite(jv_string_value(result), 1, jv_string_length_bytes(jv_copy(result)), stdout);
         ret = 0;
-      if (options & SEQ)
-        priv_fwrite("\036", 1, stdout, dumpopts & JV_PRINT_ISATTY);
-      jv_dump(result, dumpopts);
+        jv_free(result);
+      } else {
+        if (jv_get_kind(result) == JV_KIND_FALSE || jv_get_kind(result) == JV_KIND_NULL)
+          ret = 11;
+        else
+          ret = 0;
+        if (options & SEQ)
+          priv_fwrite("\036", 1, stdout, dumpopts & JV_PRINT_ISATTY);
+        jv_dump(result, dumpopts);
+      }
+      if (!(options & RAW_NO_LF))
+        priv_fwrite("\n", 1, stdout, dumpopts & JV_PRINT_ISATTY);
+      if (options & UNBUFFERED_OUTPUT)
+        fflush(stdout);
     }
-    if (!(options & RAW_NO_LF))
-      priv_fwrite("\n", 1, stdout, dumpopts & JV_PRINT_ISATTY);
-    if (options & UNBUFFERED_OUTPUT)
-      fflush(stdout);
+    if (i < 999) {
+      jv_free(result);
+    }
   }
+  jv_free(value);
   if (jv_invalid_has_msg(jv_copy(result))) {
     // Uncaught jq exception
     jv msg = jv_invalid_get_msg(jv_copy(result));
@@ -396,6 +407,11 @@ int main(int argc, char* argv[]) {
         jq_flags |= JQ_DEBUG_TRACE;
         if (!short_opts) continue;
       }
+      if (isoption(argv[i],  0,  "codegen", &short_opts)) {
+        codegen_init();
+        jq_set_codegen_enabled(jq);
+        if (!short_opts) continue;
+      }
       if (isoption(argv[i], 'h', "help", &short_opts)) {
         usage(0);
         if (!short_opts) continue;
@@ -499,6 +515,9 @@ int main(int argc, char* argv[]) {
   }
 
   if (options & DUMP_DISASM) {
+    if (jq_codegen_enabled(jq)) {
+      codegen_dump();
+    }
     jq_dump_disassembly(jq, 0);
     printf("\n");
   }

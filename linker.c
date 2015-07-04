@@ -22,7 +22,7 @@ struct lib_loading_state {
   uint64_t ct;
 };
 static int load_library(jq_state *jq, jv lib_path, int is_data, int raw,
-                        const char *as, block *out_block,
+                        const char *as, ast_node **out_prog,
                         struct lib_loading_state *lib_state);
 
 static int path_is_relative(jv p) {
@@ -224,9 +224,14 @@ static jv default_search(jq_state *jq, jv value) {
 }
 
 // XXX Split this into a util that takes a callback, and then...
-static int process_dependencies(jq_state *jq, jv jq_origin, jv lib_origin, block *src_block, struct lib_loading_state *lib_state) {
-  jv deps = block_take_imports(src_block);
-  block bk = *src_block;
+static int process_dependencies(jq_state *jq, jv jq_origin, jv lib_origin, ast_node **src_prog, struct lib_loading_state *lib_state) {
+  jv_free(lib_origin);
+  jv_free(jq_origin);
+  return 0; // TODO dtolnay
+
+  block bk = ast_block(*src_prog);
+  jv deps = block_take_imports(&bk);
+  *src_prog = ast_todo(bk);
   int nerrors = 0;
   const char *as_str = NULL;
 
@@ -268,8 +273,9 @@ static int process_dependencies(jq_state *jq, jv jq_origin, jv lib_origin, block
       // Bind the library to the program
       bk = block_bind_library(lib_state->defs[state_idx], bk, OP_IS_CALL_PSEUDO, as_str);
     } else { // Not found.   Add it to the table before binding.
-      block dep_def_block = gen_noop();
-      nerrors += load_library(jq, resolved, is_data, raw, as_str, &dep_def_block, lib_state);
+      ast_node *dep_def = NULL;
+      nerrors += load_library(jq, resolved, is_data, raw, as_str, &dep_def, lib_state);
+      block dep_def_block = ast_block(dep_def);
       // resolved has been freed
       if (nerrors == 0) {
         // Bind the library to the program
@@ -285,11 +291,11 @@ static int process_dependencies(jq_state *jq, jv jq_origin, jv lib_origin, block
 }
 
 // Loads the library at lib_path into lib_state, putting the library's defs
-// into *out_block
-static int load_library(jq_state *jq, jv lib_path, int is_data, int raw, const char *as, block *out_block, struct lib_loading_state *lib_state) {
+// into *out_prog
+static int load_library(jq_state *jq, jv lib_path, int is_data, int raw, const char *as, ast_node **out_prog, struct lib_loading_state *lib_state) {
   int nerrors = 0;
   struct locfile* src = NULL;
-  block program;
+  ast_node *program;
   jv data;
   if (is_data && !raw)
     data = jv_load_file(jv_string_value(lib_path), 0);
@@ -306,7 +312,7 @@ static int load_library(jq_state *jq, jv lib_path, int is_data, int raw, const c
     goto out;
   } else if (is_data) {
     // import "foo" as $bar;
-    program = gen_const_global(jv_copy(data), as);
+    program = ast_todo(gen_const_global(jv_copy(data), as));
   } else {
     // import "foo" as bar;
     src = locfile_init(jq, jv_string_value(lib_path), jv_string_value(data), jv_string_length_bytes(jv_copy(data)));
@@ -323,8 +329,8 @@ static int load_library(jq_state *jq, jv lib_path, int is_data, int raw, const c
   lib_state->names = realloc(lib_state->names, lib_state->ct * sizeof(const char *));
   lib_state->defs = realloc(lib_state->defs, lib_state->ct * sizeof(block));
   lib_state->names[state_idx] = strdup(jv_string_value(lib_path));
-  lib_state->defs[state_idx] = program;
-  *out_block = program;
+  lib_state->defs[state_idx] = ast_compile(program, 0);
+  *out_prog = program;
   if (src)
     locfile_free(src);
 out:
@@ -343,17 +349,18 @@ jv load_module_meta(jq_state *jq, jv mod_relpath) {
   jv meta = jv_null();
   jv data = jv_load_file(jv_string_value(lib_path), 1);
   if (jv_is_valid(data)) {
-    block program;
+    ast_node *program;
     struct locfile* src = locfile_init(jq, jv_string_value(lib_path), jv_string_value(data), jv_string_length_bytes(jv_copy(data)));
     int nerrors = jq_parse_library(src, &program);
+    block program_b = ast_block(program);
     if (nerrors == 0) {
-      meta = block_module_meta(program);
+      meta = block_module_meta(program_b);
       if (jv_get_kind(meta) == JV_KIND_NULL)
         meta = jv_object();
-      meta = jv_object_set(meta, jv_string("deps"), block_take_imports(&program));
+      meta = jv_object_set(meta, jv_string("deps"), block_take_imports(&program_b));
     }
     locfile_free(src);
-    block_free(program);
+    block_free(program_b);
   }
   jv_free(lib_path);
   jv_free(data);
@@ -362,7 +369,7 @@ jv load_module_meta(jq_state *jq, jv mod_relpath) {
 
 int load_program(jq_state *jq, struct locfile* src, block *out_block) {
   int nerrors = 0;
-  block program;
+  ast_node *program;
   struct lib_loading_state lib_state = {0,0,0};
   nerrors = jq_parse(src, &program);
   if (nerrors)
@@ -379,10 +386,13 @@ int load_program(jq_state *jq, struct locfile* src, block *out_block) {
   }
   free(lib_state.names);
   free(lib_state.defs);
-  if (nerrors)
-    block_free(program);
-  else
-    *out_block = block_drop_unreferenced(block_join(libs, program));
+  if (nerrors) {
+    block_free(ast_block(program));
+    return nerrors;
+  }
 
-  return nerrors;
+  program = ast_mk_link_libs(libs, program);
+  *out_block = ast_compile(program, jq_codegen_enabled(jq));
+  ast_free(program);
+  return 0;
 }

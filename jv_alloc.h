@@ -10,7 +10,7 @@ extern volatile char jv_mem_uninitialised;
 
 static void jv_mem_invalidate(void* mem, size_t n) {
 #ifndef NDEBUG
-  char* m = mem;
+  char* m = (char *) mem;
   while (n--) *m++ ^= jv_mem_uninitialised ^ jv_mem_uninitialised;
 #endif
 }

@@ -35,7 +35,7 @@ void *alloca (size_t);
 #include "linker.h"
 #include "locfile.h"
 #include "jv_unicode.h"
-
+#include "runtime.h"
 
 static jv type_error(jv bad, const char* msg) {
   char errbuf[15];
@@ -47,39 +47,9 @@ static jv type_error(jv bad, const char* msg) {
   return err;
 }
 
-static jv type_error2(jv bad1, jv bad2, const char* msg) {
-  char errbuf1[15],errbuf2[15];
-  jv err = jv_invalid_with_msg(jv_string_fmt("%s (%s) and %s (%s) %s",
-                                             jv_kind_name(jv_get_kind(bad1)),
-                                             jv_dump_string_trunc(jv_copy(bad1), errbuf1, sizeof(errbuf1)),
-                                             jv_kind_name(jv_get_kind(bad2)),
-                                             jv_dump_string_trunc(jv_copy(bad2), errbuf2, sizeof(errbuf2)),
-                                             msg));
-  jv_free(bad1);
-  jv_free(bad2);
-  return err;
-}
-
 static jv f_plus(jq_state *jq, jv input, jv a, jv b) {
   jv_free(input);
-  if (jv_get_kind(a) == JV_KIND_NULL) {
-    jv_free(a);
-    return b;
-  } else if (jv_get_kind(b) == JV_KIND_NULL) {
-    jv_free(b);
-    return a;
-  } else if (jv_get_kind(a) == JV_KIND_NUMBER && jv_get_kind(b) == JV_KIND_NUMBER) {
-    return jv_number(jv_number_value(a) +
-                     jv_number_value(b));
-  } else if (jv_get_kind(a) == JV_KIND_STRING && jv_get_kind(b) == JV_KIND_STRING) {
-    return jv_string_concat(a, b);
-  } else if (jv_get_kind(a) == JV_KIND_ARRAY && jv_get_kind(b) == JV_KIND_ARRAY) {
-    return jv_array_concat(a, b);
-  } else if (jv_get_kind(a) == JV_KIND_OBJECT && jv_get_kind(b) == JV_KIND_OBJECT) {
-    return jv_object_merge(a, b);
-  } else {
-    return type_error2(a, b, "cannot be added");
-  }
+  return jvr_plus(a, b);
 }
 
 #define LIBM_DD(name) \
@@ -183,28 +153,7 @@ static jv f_rtrimstr(jq_state *jq, jv input, jv right) {
 
 static jv f_minus(jq_state *jq, jv input, jv a, jv b) {
   jv_free(input);
-  if (jv_get_kind(a) == JV_KIND_NUMBER && jv_get_kind(b) == JV_KIND_NUMBER) {
-    return jv_number(jv_number_value(a) - jv_number_value(b));
-  } else if (jv_get_kind(a) == JV_KIND_ARRAY && jv_get_kind(b) == JV_KIND_ARRAY) {
-    jv out = jv_array();
-    jv_array_foreach(a, i, x) {
-      int include = 1;
-      jv_array_foreach(b, j, y) {
-        if (jv_equal(jv_copy(x), y)) {
-          include = 0;
-          break;
-        }
-      }
-      if (include)
-        out = jv_array_append(out, jv_copy(x));
-      jv_free(x);
-    }
-    jv_free(a);
-    jv_free(b);
-    return out;
-  } else {
-    return type_error2(a, b, "cannot be subtracted");
-  }
+  return jvr_minus(a, b);
 }
 
 static jv f_multiply(jq_state *jq, jv input, jv a, jv b) {
@@ -237,7 +186,7 @@ static jv f_multiply(jq_state *jq, jv input, jv a, jv b) {
   } else if (ak == JV_KIND_OBJECT && bk == JV_KIND_OBJECT) {
     return jv_object_merge_recursive(a, b);
   } else {
-    return type_error2(a, b, "cannot be multiplied");
+    return jvr_type_error2(a, b, "cannot be multiplied");
   }
 }
 
@@ -245,12 +194,12 @@ static jv f_divide(jq_state *jq, jv input, jv a, jv b) {
   jv_free(input);
   if (jv_get_kind(a) == JV_KIND_NUMBER && jv_get_kind(b) == JV_KIND_NUMBER) {
     if (jv_number_value(b) == 0.0)
-      return type_error2(a, b, "cannot be divided because the divisor is zero");
+      return jvr_type_error2(a, b, "cannot be divided because the divisor is zero");
     return jv_number(jv_number_value(a) / jv_number_value(b));
   } else if (jv_get_kind(a) == JV_KIND_STRING && jv_get_kind(b) == JV_KIND_STRING) {
     return jv_string_split(a, b);
   } else {
-    return type_error2(a, b, "cannot be divided");
+    return jvr_type_error2(a, b, "cannot be divided");
   }
 }
 
@@ -258,10 +207,10 @@ static jv f_mod(jq_state *jq, jv input, jv a, jv b) {
   jv_free(input);
   if (jv_get_kind(a) == JV_KIND_NUMBER && jv_get_kind(b) == JV_KIND_NUMBER) {
     if ((intmax_t)jv_number_value(b) == 0)
-      return type_error2(a, b, "cannot be divided (remainder) because the divisor is zero");
+      return jvr_type_error2(a, b, "cannot be divided (remainder) because the divisor is zero");
     return jv_number((intmax_t)jv_number_value(a) % (intmax_t)jv_number_value(b));
   } else {
-    return type_error2(a, b, "cannot be divided (remainder)");
+    return jvr_type_error2(a, b, "cannot be divided (remainder)");
   }
 }
 
@@ -311,7 +260,7 @@ static jv f_contains(jq_state *jq, jv a, jv b) {
   if (jv_get_kind(a) == jv_get_kind(b)) {
     return jv_bool(jv_contains(a, b));
   } else {
-    return type_error2(a, b, "cannot have their containment checked");
+    return jvr_type_error2(a, b, "cannot have their containment checked");
   }
 }
 
@@ -577,7 +526,7 @@ static jv f_sort_by_impl(jq_state *jq, jv input, jv keys) {
       jv_array_length(jv_copy(input)) == jv_array_length(jv_copy(keys))) {
     return jv_sort(input, keys);
   } else {
-    return type_error2(input, keys, "cannot be sorted, as they are not both arrays");
+    return jvr_type_error2(input, keys, "cannot be sorted, as they are not both arrays");
   }
 }
 
@@ -587,7 +536,7 @@ static jv f_group_by_impl(jq_state *jq, jv input, jv keys) {
       jv_array_length(jv_copy(input)) == jv_array_length(jv_copy(keys))) {
     return jv_group(input, keys);
   } else {
-    return type_error2(input, keys, "cannot be sorted, as they are not both arrays");
+    return jvr_type_error2(input, keys, "cannot be sorted, as they are not both arrays");
   }
 }
 
@@ -803,11 +752,11 @@ static jv f_match(jq_state *jq, jv input, jv regex, jv modifiers, jv testmode) {
 
 static jv minmax_by(jv values, jv keys, int is_min) {
   if (jv_get_kind(values) != JV_KIND_ARRAY)
-    return type_error2(values, keys, "cannot be iterated over");
+    return jvr_type_error2(values, keys, "cannot be iterated over");
   if (jv_get_kind(keys) != JV_KIND_ARRAY)
-    return type_error2(values, keys, "cannot be iterated over");
+    return jvr_type_error2(values, keys, "cannot be iterated over");
   if (jv_array_length(jv_copy(values)) != jv_array_length(jv_copy(keys)))
-    return type_error2(values, keys, "have wrong length");
+    return jvr_type_error2(values, keys, "have wrong length");
 
   if (jv_array_length(jv_copy(values)) == 0) {
     jv_free(values);
@@ -1661,10 +1610,11 @@ static const char* const jq_builtins[] = {
 static int builtins_bind_one(jq_state *jq, block* bb, const char* code) {
   struct locfile* src;
   src = locfile_init(jq, "<builtin>", code, strlen(code));
-  block funcs;
+  ast_node *funcs;
   int nerrors = jq_parse_library(src, &funcs);
+  block funcs_b = ast_block(funcs);
   if (nerrors == 0) {
-    *bb = block_bind_referenced(funcs, *bb, OP_IS_CALL_PSEUDO);
+    *bb = block_bind_referenced(funcs_b, *bb, OP_IS_CALL_PSEUDO);
   }
   locfile_free(src);
   return nerrors;

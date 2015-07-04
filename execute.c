@@ -18,6 +18,7 @@
 #include "builtin.h"
 #include "util.h"
 #include "linker.h"
+#include "codegen.h"
 
 struct jq_state {
   void (*nomem_handler)(void *);
@@ -37,6 +38,7 @@ struct jq_state {
   jv value_at_path;
   int subexp_nest;
   int debug_trace_enabled;
+  int codegen_enabled;
   int initial_execution;
   unsigned next_label;
 
@@ -804,6 +806,22 @@ jv jq_next(jq_state *jq) {
       break;
     }
 
+    case CALL_NATIVE: {
+      jv top = stack_pop(jq);
+      struct cfunction* function = &frame_current(jq)->bc->globals->cfunctions[*pc++];
+      typedef jv (*native_func)(jv);
+      top = ((native_func)function->fptr)(top);
+      if (jv_is_valid(top)) {
+        stack_push(jq, top);
+      } else if (jv_invalid_has_msg(jv_copy(top))) {
+        set_error(jq, top);
+        goto do_backtrack;
+      } else {
+        goto do_backtrack;
+      }
+      break;
+    }
+
     case TAIL_CALL_JQ:
     case CALL_JQ: {
       /*
@@ -938,6 +956,9 @@ jq_state *jq_init(void) {
   jq->attrs = jv_object();
   jq->path = jv_null();
   jq->value_at_path = jv_null();
+
+  jq->codegen_enabled = 0;
+
   return jq;
 }
 
@@ -1088,6 +1109,9 @@ int jq_compile_args(jq_state *jq, const char* str, jv args) {
 
     nerrors = builtins_bind(jq, &program);
     if (nerrors == 0) {
+      if (jq_codegen_enabled(jq)) {
+        codegen_finalize();
+      }
       nerrors = block_compile(program, &jq->bc, locations);
     }
   }
@@ -1128,6 +1152,14 @@ void jq_set_attr(jq_state *jq, jv attr, jv val) {
 
 jv jq_get_attr(jq_state *jq, jv attr) {
   return jv_object_get(jv_copy(jq->attrs), attr);
+}
+
+void jq_set_codegen_enabled(jq_state *jq) {
+  jq->codegen_enabled = 1;
+}
+
+int jq_codegen_enabled(jq_state *jq) {
+  return jq->codegen_enabled;
 }
 
 void jq_dump_disassembly(jq_state *jq, int indent) {

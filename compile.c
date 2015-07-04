@@ -5,6 +5,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
+#include "codegen.h"
 #include "compile.h"
 #include "bytecode.h"
 #include "locfile.h"
@@ -550,7 +551,17 @@ block gen_call(const char* name, block args) {
   return b;
 }
 
-
+block gen_call_native(const char *name) {
+  inst *call_native = inst_new(CALL_NATIVE);
+  call_native->bound_by = call_native;
+  call_native->symbol = strdup(name);
+  struct cfunction *cfunc = jv_mem_alloc(sizeof(struct cfunction));
+  cfunc->fptr = NULL;
+  cfunc->name = name;
+  cfunc->nargs = 1;
+  call_native->imm.cfunc = cfunc;
+  return inst_block(call_native);
+}
 
 block gen_subexp(block a) {
   return BLOCK(gen_op_simple(SUBEXP_BEGIN), a, gen_op_simple(SUBEXP_END));
@@ -960,7 +971,7 @@ static uint16_t nesting_level(struct bytecode* bc, inst* target) {
 static int count_cfunctions(block b) {
   int n = 0;
   for (inst* i = b.first; i; i = i->next) {
-    if (i->op == CLOSURE_CREATE_C) n++;
+    if (i->op == CLOSURE_CREATE_C || i->op == CALL_NATIVE) n++;
     n += count_cfunctions(i->subfn);
   }
   return n;
@@ -1081,13 +1092,17 @@ static int compile(struct bytecode* bc, block b, struct locfile* lf) {
     if (curr->op == CLOSURE_CREATE) {
       assert(curr->bound_by == curr);
       curr->imm.intval = bc->nsubfunctions++;
-    }
-    if (curr->op == CLOSURE_CREATE_C) {
+    } else if (curr->op == CLOSURE_CREATE_C || curr->op == CALL_NATIVE) {
       assert(curr->bound_by == curr);
       int idx = bc->globals->ncfunctions++;
       bc->globals->cfunc_names = jv_array_append(bc->globals->cfunc_names,
                                                  jv_string(curr->symbol));
       bc->globals->cfunctions[idx] = *curr->imm.cfunc;
+      if (curr->op == CALL_NATIVE) {
+        jv_mem_free((struct cfunction *) curr->imm.cfunc); // TODO dtolnay
+        cfunction_ptr fptr = (cfunction_ptr) codegen_get_address(curr->symbol);
+        bc->globals->cfunctions[idx].fptr = fptr;
+      }
       curr->imm.intval = idx;
     }
   }
@@ -1141,6 +1156,8 @@ static int compile(struct bytecode* bc, block b, struct locfile* lf) {
       assert(!curr->arglist.first);
       code[pos++] = (uint16_t)curr->imm.intval;
       code[pos++] = curr->bound_by->imm.intval;
+    } else if (curr->op == CALL_NATIVE) {
+      code[pos++] = (uint16_t)curr->imm.intval;
     } else if (curr->op == CALL_JQ) {
       assert(curr->bound_by->op == CLOSURE_CREATE ||
              curr->bound_by->op == CLOSURE_PARAM);

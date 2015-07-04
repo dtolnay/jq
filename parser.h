@@ -40,8 +40,9 @@
 extern int yydebug;
 #endif
 /* "%code requires" blocks.  */
-#line 11 "parser.y" /* yacc.c:1909  */
+#line 12 "parser.y" /* yacc.c:1909  */
 
+#include "ast.h"
 #include "locfile.h"
 struct lexer_param;
 
@@ -57,7 +58,7 @@ struct lexer_param;
     }                                           \
   } while (0)
 
-#line 61 "parser.h" /* yacc.c:1909  */
+#line 62 "parser.h" /* yacc.c:1909  */
 
 /* Token type.  */
 #ifndef YYTOKENTYPE
@@ -161,12 +162,12 @@ struct lexer_param;
 typedef union YYSTYPE YYSTYPE;
 union YYSTYPE
 {
-#line 31 "parser.y" /* yacc.c:1909  */
+#line 33 "parser.y" /* yacc.c:1909  */
 
   jv literal;
-  block blk;
+  ast_node *node;
 
-#line 170 "parser.h" /* yacc.c:1909  */
+#line 171 "parser.h" /* yacc.c:1909  */
 };
 # define YYSTYPE_IS_TRIVIAL 1
 # define YYSTYPE_IS_DECLARED 1
@@ -188,6 +189,6 @@ struct YYLTYPE
 
 
 
-int yyparse (block* answer, int* errors, struct locfile* locations, struct lexer_param* lexer_param_ptr);
+int yyparse (ast_node **answer, int* errors, struct locfile* locations, struct lexer_param* lexer_param_ptr);
 
 #endif /* !YY_YY_PARSER_H_INCLUDED  */

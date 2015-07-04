@@ -12,6 +12,7 @@
 #define GLOBAL (OP_HAS_CONSTANT | OP_HAS_VARIABLE | OP_HAS_BINDING | OP_IS_CALL_PSEUDO), 4
 #define BRANCH OP_HAS_BRANCH, 2
 #define CFUNC (OP_HAS_CFUNC | OP_HAS_BINDING), 3
+#define NFUNC (OP_HAS_CFUNC | OP_HAS_BINDING), 2
 #define UFUNC (OP_HAS_UFUNC | OP_HAS_BINDING | OP_IS_CALL_PSEUDO), 4
 #define DEFINITION (OP_IS_CALL_PSEUDO | OP_HAS_BINDING), 0
 #define CLOSURE_REF_IMM (OP_IS_CALL_PSEUDO | OP_HAS_BINDING), 2
@@ -125,6 +126,9 @@ void dump_operation(struct bytecode* bc, uint16_t* codeptr) {
       jv name = jv_array_get(jv_copy(bc->globals->cfunc_names), func);
       printf(" %s", jv_string_value(name));
       jv_free(name);
+    } else if (op->op == CALL_NATIVE) {
+      struct cfunction *native_func = &bc->globals->cfunctions[imm];
+      printf(" @%s", native_func->name);
     } else if (op->flags & OP_HAS_BRANCH) {
       printf(" %04d", pc + imm);
     } else if (op->flags & OP_HAS_CONSTANT) {
